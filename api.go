@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	emit "github.com/openpak/rewards-emit"
 	"net/http"
 	"strconv"
 	"strings"
@@ -17,6 +18,8 @@ type API struct {
 	Store *Store
 	Check Checker
 	Key   string
+	// Rewards reports completed trades to the rewards service; nil or disabled does nothing.
+	Rewards *emit.Client
 }
 
 func (a *API) Routes() http.Handler {
@@ -67,7 +70,9 @@ func reply(w http.ResponseWriter, code int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-func fail(w http.ResponseWriter, code int, msg string) { reply(w, code, map[string]string{"error": msg}) }
+func fail(w http.ResponseWriter, code int, msg string) {
+	reply(w, code, map[string]string{"error": msg})
+}
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
@@ -285,6 +290,7 @@ func (a *API) trade(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		fail(w, 422, err.Error())
 	default:
+		a.tradeDone(l.ID, "taker", l.Generation, in.PID)
 		reply(w, 200, l)
 	}
 }
@@ -308,6 +314,9 @@ func (a *API) finish(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		fail(w, 500, "store")
 	default:
+		if l.Status == "collected" { // collecting a traded listing completes the trade for its owner
+			a.tradeDone(l.ID, "owner", l.Generation, l.PID)
+		}
 		reply(w, 200, l)
 	}
 }
