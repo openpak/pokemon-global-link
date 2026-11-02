@@ -33,7 +33,6 @@ GOWORK=off go test ./...
 - [Protocol](docs/protocol.md)
 - [API for the website](docs/api.md)
 - [Deploy](docs/deploy.md)
-- [Notes](docs/notes.md)
 
 ## Licence
 

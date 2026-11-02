@@ -12,3 +12,10 @@ See `research/pokemon/global-link-plan.md` (private research repo) for the per-g
 | Switch SV/PLA | NPLN tenant; Pokemon HOME is a separate Nintendo Account cloud service | Out of scope |
 
 The HTTP API in [api.md](api.md) is complete and tested; the protocol handlers are thin callers of it.
+
+## Store behaviour
+
+Written from scratch for OpenPak with no third-party code; the unlicensed community GTS servers
+(ir-gts, RubyGTS) were not copied, only the publicly observable protocol is documented. SQLite with
+one writer (a private network does not need Postgres). One open or uncollected GTS Pokemon per
+trainer per generation, as in the original.
