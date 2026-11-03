@@ -7,7 +7,7 @@ with a legality gate (`pokemon-legality`) on every Pokemon that enters.
 | --- | --- |
 | Network | Any; Gen 4/5 (WFC), Gen 6 (NEX) and later generations feed the same store |
 | Role | GTS listings and trades, battle records, usage rankings, public read-only JSON API |
-| Depends on | [`pokemon-legality`](https://github.com/openpak/pokemon-legality); SQLite file on a volume |
+| Depends on | [`pokemon-legality`](https://github.com/openpak/pokemon-legality); Postgres (`PGL_DATABASE_URL`) |
 | Image | `ghcr.io/openpak/pokemon-global-link` |
 | Licence | AGPL-3.0-only |
 

@@ -16,6 +16,6 @@ The HTTP API in [api.md](api.md) is complete and tested; the protocol handlers a
 ## Store behaviour
 
 Written from scratch for OpenPak with no third-party code; the unlicensed community GTS servers
-(ir-gts, RubyGTS) were not copied, only the publicly observable protocol is documented. SQLite with
-one writer (a private network does not need Postgres). One open or uncollected GTS Pokemon per
+(ir-gts, RubyGTS) were not copied, only the publicly observable protocol is documented. Postgres
+(small pool). One open or uncollected GTS Pokemon per
 trainer per generation, as in the original.

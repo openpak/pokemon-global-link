@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -27,10 +26,7 @@ func TestOnlyCompletedTradesAreReported(t *testing.T) {
 		w.Write([]byte(`{"results":[]}`))
 	}))
 	defer sink.Close()
-	st, err := OpenStore(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := testStore(t)
 	rw := emit.New(emit.Config{URL: sink.URL, Key: "k", Source: "pgl", Flush: 10 * time.Millisecond})
 	h := (&API{Store: st, Check: fakeCheck{}, Key: "k", Rewards: rw}).Routes()
 

@@ -4,57 +4,104 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 const schema = `
 CREATE TABLE IF NOT EXISTS gts_listings (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  created_at INTEGER NOT NULL,
-  pid INTEGER NOT NULL,
-  generation INTEGER NOT NULL,
-  game TEXT NOT NULL,
-  species INTEGER NOT NULL, form INTEGER NOT NULL, level INTEGER NOT NULL, gender INTEGER NOT NULL,
-  shiny INTEGER NOT NULL, nickname TEXT NOT NULL, ot TEXT NOT NULL,
-  format TEXT NOT NULL, data BLOB NOT NULL,
-  req_species INTEGER NOT NULL DEFAULT 0, req_gender INTEGER NOT NULL DEFAULT -1,
-  req_level_min INTEGER NOT NULL DEFAULT 0, req_level_max INTEGER NOT NULL DEFAULT 100,
-  status TEXT NOT NULL DEFAULT 'open',
-  traded_at INTEGER, returned_format TEXT, returned_data BLOB
+  id bigserial PRIMARY KEY,
+  created_at bigint NOT NULL,
+  pid bigint NOT NULL,
+  generation int NOT NULL,
+  game text NOT NULL,
+  species int NOT NULL, form int NOT NULL, level int NOT NULL, gender int NOT NULL,
+  shiny boolean NOT NULL, nickname text NOT NULL, ot text NOT NULL,
+  format text NOT NULL, data bytea NOT NULL,
+  req_species int NOT NULL DEFAULT 0, req_gender int NOT NULL DEFAULT -1,
+  req_level_min int NOT NULL DEFAULT 0, req_level_max int NOT NULL DEFAULT 100,
+  status text NOT NULL DEFAULT 'open',
+  traded_at bigint, returned_format text, returned_data bytea
 );
 CREATE INDEX IF NOT EXISTS gts_open ON gts_listings(status, generation, species);
 CREATE UNIQUE INDEX IF NOT EXISTS gts_one_per_pid ON gts_listings(pid, generation) WHERE status IN ('open','traded');
 CREATE TABLE IF NOT EXISTS battle_records (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL,
-  generation INTEGER NOT NULL, game TEXT NOT NULL, format TEXT NOT NULL, season TEXT NOT NULL,
-  pid INTEGER NOT NULL, result TEXT NOT NULL
+  id bigserial PRIMARY KEY, created_at bigint NOT NULL,
+  generation int NOT NULL, game text NOT NULL, format text NOT NULL, season text NOT NULL,
+  pid bigint NOT NULL, result text NOT NULL
 );
 CREATE INDEX IF NOT EXISTS battle_fs ON battle_records(format, season);
 CREATE TABLE IF NOT EXISTS battle_members (
-  record_id INTEGER NOT NULL REFERENCES battle_records(id),
-  species INTEGER NOT NULL, form INTEGER NOT NULL, level INTEGER NOT NULL,
-  ability INTEGER NOT NULL, item INTEGER NOT NULL, nature INTEGER NOT NULL
+  record_id bigint NOT NULL REFERENCES battle_records(id),
+  species int NOT NULL, form int NOT NULL, level int NOT NULL,
+  ability int NOT NULL, item int NOT NULL, nature int NOT NULL
 );
 CREATE INDEX IF NOT EXISTS members_rec ON battle_members(record_id);
-CREATE TABLE IF NOT EXISTS battle_moves (record_id INTEGER NOT NULL, species INTEGER NOT NULL, move INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS battle_moves (record_id bigint NOT NULL, species int NOT NULL, move int NOT NULL);
 CREATE INDEX IF NOT EXISTS moves_rec ON battle_moves(record_id);
 `
 
-type Store struct{ db *sql.DB }
+// DB wraps database/sql so the queries keep ? placeholders; they are numbered ($1..) on the way in.
+type DB struct{ *sql.DB }
+type Tx struct{ *sql.Tx }
 
-func OpenStore(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
+func rebind(q string) string {
+	var b strings.Builder
+	n := 0
+	for _, c := range q {
+		if c == '?' {
+			n++
+			b.WriteString("$" + strconv.Itoa(n))
+		} else {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
+func (d DB) ExecContext(ctx context.Context, q string, a ...any) (sql.Result, error) {
+	return d.DB.ExecContext(ctx, rebind(q), a...)
+}
+func (d DB) QueryContext(ctx context.Context, q string, a ...any) (*sql.Rows, error) {
+	return d.DB.QueryContext(ctx, rebind(q), a...)
+}
+func (d DB) QueryRowContext(ctx context.Context, q string, a ...any) *sql.Row {
+	return d.DB.QueryRowContext(ctx, rebind(q), a...)
+}
+func (d DB) BeginTx(ctx context.Context, o *sql.TxOptions) (Tx, error) {
+	t, err := d.DB.BeginTx(ctx, o)
+	return Tx{t}, err
+}
+func (t Tx) ExecContext(ctx context.Context, q string, a ...any) (sql.Result, error) {
+	return t.Tx.ExecContext(ctx, rebind(q), a...)
+}
+func (t Tx) QueryRowContext(ctx context.Context, q string, a ...any) *sql.Row {
+	return t.Tx.QueryRowContext(ctx, rebind(q), a...)
+}
+
+type Store struct{ db DB }
+
+// OpenStore connects to Postgres (small pool) and creates the schema. An empty DSN is an error:
+// there is no file or memory fallback.
+func OpenStore(dsn string) (*Store, error) {
+	if dsn == "" {
+		return nil, errors.New("PGL_DATABASE_URL is required")
+	}
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
+	db.SetMaxOpenConns(3)
+	db.SetMaxIdleConns(3)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := db.ExecContext(ctx, schema); err != nil {
 		return nil, err
 	}
-	return &Store{db}, nil
+	return &Store{DB{db}}, nil
 }
 
 // Request is what the depositor wants back. Species 0 and Gender -1 mean any.
@@ -92,23 +139,23 @@ var ErrNotFound = errors.New("not found")
 
 func (s *Store) Deposit(ctx context.Context, pid int64, game string, v *Verdict, format string, data []byte, r Request) (*Listing, error) {
 	now := time.Now().Unix()
-	res, err := s.db.ExecContext(ctx, `INSERT INTO gts_listings
+	var id int64
+	err := s.db.QueryRowContext(ctx, `INSERT INTO gts_listings
 	 (created_at,pid,generation,game,species,form,level,gender,shiny,nickname,ot,format,data,req_species,req_gender,req_level_min,req_level_max)
-	 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
 		now, pid, v.Generation, game, v.Species, v.Form, v.Level, v.Gender, v.Shiny, v.Nickname, v.OT, format, data,
-		r.Species, r.Gender, r.LevelMin, r.LevelMax)
+		r.Species, r.Gender, r.LevelMin, r.LevelMax).Scan(&id)
 	if err != nil {
 		if isUnique(err) {
 			return nil, ErrConflict
 		}
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
 	return s.Get(ctx, id, true)
 }
 
 func isUnique(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint")
+	return err != nil && strings.Contains(err.Error(), "SQLSTATE 23505")
 }
 
 const listingCols = `id,created_at,pid,generation,game,species,form,level,gender,shiny,nickname,ot,format,data,
@@ -264,12 +311,12 @@ func (s *Store) RecordBattle(ctx context.Context, gen int, game, format, season 
 		return 0, err
 	}
 	defer tx.Rollback()
-	res, err := tx.ExecContext(ctx, `INSERT INTO battle_records(created_at,generation,game,format,season,pid,result) VALUES (?,?,?,?,?,?,?)`,
-		time.Now().Unix(), gen, game, format, season, pid, result)
+	var id int64
+	err = tx.QueryRowContext(ctx, `INSERT INTO battle_records(created_at,generation,game,format,season,pid,result) VALUES (?,?,?,?,?,?,?) RETURNING id`,
+		time.Now().Unix(), gen, game, format, season, pid, result).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
-	id, _ := res.LastInsertId()
 	for _, v := range team {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO battle_members VALUES (?,?,?,?,?,?,?)`, id, v.Species, v.Form, v.Level, v.Ability, v.HeldItem, v.Nature); err != nil {
 			return 0, err
@@ -325,7 +372,7 @@ func (s *Store) Showcase(ctx context.Context, gen int, format, season string, li
 	}
 	sub := `r.id IN (SELECT r.id` + f + `)`
 	q := func(tbl, col string, withResult bool) ([]UsageRow, error) {
-		query := `SELECT ` + col + ` AS k, COUNT(*) AS n, SUM(r.result='win'), SUM(r.result='loss') FROM ` + tbl + ` t JOIN battle_records r ON r.id=t.record_id WHERE ` + sub + ` GROUP BY k HAVING k IS NOT NULL ORDER BY n DESC, k LIMIT ?`
+		query := `SELECT ` + col + ` AS k, COUNT(*) AS n, SUM((r.result='win')::int), SUM((r.result='loss')::int) FROM ` + tbl + ` t JOIN battle_records r ON r.id=t.record_id WHERE (` + col + `) IS NOT NULL AND ` + sub + ` GROUP BY k ORDER BY n DESC, k LIMIT ?`
 		rows, err := s.db.QueryContext(ctx, query, append(append([]any{}, args...), limit)...)
 		if err != nil {
 			return nil, err

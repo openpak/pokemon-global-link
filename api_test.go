@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 )
 
@@ -22,10 +21,7 @@ func (f fakeCheck) Check(_ context.Context, d []byte, _ string) (*Verdict, error
 }
 
 func setup(t *testing.T, c Checker) http.Handler {
-	st, err := OpenStore(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := testStore(t)
 	return (&API{Store: st, Check: c, Key: "k"}).Routes()
 }
 

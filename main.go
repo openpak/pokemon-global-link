@@ -22,10 +22,11 @@ func main() {
 	if key == "" {
 		log.Fatal("PGL_INTERNAL_KEY is required")
 	}
-	st, err := OpenStore(env("PGL_DB_PATH", "/data/pgl.db"))
+	st, err := OpenStore(os.Getenv("PGL_DATABASE_URL"))
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("postgres: %v", err)
 	}
+	log.Printf("pokemon-global-link: using Postgres")
 	api := &API{Store: st, Key: key, Check: &HTTPChecker{
 		URL: env("PGL_LEGALITY_URL", "http://pokemon-legality:20170"), Key: os.Getenv("PGL_LEGALITY_KEY")},
 		Rewards: emit.FromEnv("pokemon-global-link")}
