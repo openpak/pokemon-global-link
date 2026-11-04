@@ -32,6 +32,12 @@ func main() {
 		Rewards: emit.FromEnv("pokemon-global-link")}
 	srv := &http.Server{Addr: env("PGL_HTTP_ADDR", ":20160"), Handler: api.Routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second}
+	go func() { // account erasure (card #120): own listener, never published to the host
+		es := &http.Server{Addr: env("ERASE_ADDR", ":9099"), Handler: api.EraseRoutes(), ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second}
+		log.Printf("pokemon-global-link erase listener on %s", es.Addr)
+		log.Fatal(es.ListenAndServe())
+	}()
 	log.Printf("pokemon-global-link listening on %s", srv.Addr)
 	log.Fatal(srv.ListenAndServe())
 }
